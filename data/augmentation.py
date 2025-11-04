@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from typing import List, Callable
+from typing import Tuple
 
 class TimeSeriesAugmentation:
     """时间序列数据增强"""
