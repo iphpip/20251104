@@ -50,7 +50,7 @@ class BaselineExperiments:
     
     def run_all_baselines(self, dataset: str) -> pd.DataFrame:
         """运行所有基线方法"""
-        print(f"🧪 Running Baseline Experiments on {dataset}")
+        print(f"Running Baseline Experiments on {dataset}")
         
         # 加载数据
         data_manager = DataManager(self.config)
