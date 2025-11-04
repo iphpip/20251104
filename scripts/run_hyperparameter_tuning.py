@@ -26,7 +26,7 @@ def main():
     
     args = parser.parse_args()
     
-    print("[SCI] SCIENTIFIC HYPERPARAMETER OPTIMIZATION")
+    print("SCIENTIFIC HYPERPARAMETER OPTIMIZATION")
     print("=" * 60)
     
     if args.task in ['tune_hyperparameters', 'all']:
@@ -39,7 +39,7 @@ def main():
         )
         
         best_params = tuner.run_study()
-        print(f"[TARGET] Best parameters: {best_params}")
+        print(f"Best parameters: {best_params}")
     
     if args.task in ['temperature_sensitivity', 'all']:
         # 温度敏感性分析
@@ -68,7 +68,7 @@ def main():
         
         all_results = {}
         for dataset in datasets:
-            print(f"\n[CHART] Running baselines on {dataset}")
+            print(f"\n Running baselines on {dataset}")
             results = baseline_runner.run_all_baselines(dataset)
             all_results[dataset] = results
         
@@ -77,7 +77,7 @@ def main():
         comparator = BaselineComparison()
         report = comparator.create_comparison_report(all_results)
         
-        print("✅ Baseline experiments completed and report generated")
+        print("Baseline experiments completed and report generated")
 
 if __name__ == '__main__':
     main()
