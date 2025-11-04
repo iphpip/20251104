@@ -95,7 +95,7 @@ class FrequencyContrastiveLoss(nn.Module):
         loss = -torch.log(numerator / denominator)
         return loss.mean()
 
-
+# 之前是class CombinedContrastiveLoss(nn.Moderule):
 class CombinedContrastiveLoss(nn.Module):
     """组合对比损失"""
     

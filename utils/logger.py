@@ -85,6 +85,30 @@ class ScientificLogger:
             
             self.logger.addHandler(file_handler)
             self.logger.addHandler(console_handler)
+
+    def log_evaluation_result(self, eval_type: str, results: Dict[str, Any]):
+        """记录评估结果（如基线比较、模型测试结果）- 满足SCI实验记录要求"""
+        # 初始化evaluation字段（若不存在）
+        if "evaluation" not in self.experiment_record["results"]:
+            self.experiment_record["results"]["evaluation"] = {}
+        
+        # 记录带时间戳的评估结果
+        evaluation_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "results": results,
+            "eval_type": eval_type
+        }
+        
+        # 按评估类型分类存储
+        if eval_type not in self.experiment_record["results"]["evaluation"]:
+            self.experiment_record["results"]["evaluation"][eval_type] = []
+        self.experiment_record["results"]["evaluation"][eval_type].append(evaluation_entry)
+        
+        # 日志输出关键信息
+        self.logger.info(f"✅ 评估结果已记录（类型：{eval_type}）")
+        if "best_method" in results:
+            self.logger.info(f"   最优方法：{results['best_method']}")
+        self._save_record()  # 保存更新后的实验记录
     
     def log_research_design(self, research_design: Dict[str, Any]):
         """记录研究设计 - SCI论文方法部分"""

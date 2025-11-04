@@ -15,7 +15,7 @@ datasets:
     train_anomaly_ratio: 0.085
     test_anomaly_ratio: 0.1036
   SWaT:
-    path: "swat"  # 需要下载
+    path: "swat"
     type: "multivariate" 
     dimensions: 51
     train_anomaly_ratio: 0.0
@@ -24,6 +24,8 @@ datasets:
     path: "skab"
     type: "multivariate"
     dimensions: 8
+    train_anomaly_ratio: 0.2826
+    test_anomaly_ratio: 0.2855
   MIT-BIH:
     path: "mitdb"
     type: "multivariate"
@@ -33,12 +35,13 @@ datasets:
 
 # 数据预处理配置
 data:
-  window_size: 100
-  stride: 1
+  window_size: 10
+  stride: 10
   train_ratio: 0.7
   val_ratio: 0.1
   test_ratio: 0.2
   normalization: "zscore"
+  is_multivariate: ${datasets.${tuning.dataset}.type == 'multivariate'}
 
 # 数据增强配置
 augmentation:

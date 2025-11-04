@@ -7,6 +7,7 @@ from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support, roc_auc_score
 from utils.logger import ScientificLogger
 
+# 之前是class AnomalyDetectorTrainer:
 class EnhancedAnomalyDetectorTrainer:
     """异常检测器训练器"""
     
