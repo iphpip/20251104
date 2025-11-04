@@ -18,7 +18,7 @@ from typing import Dict, List, Any, Tuple
 from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
-
+from utils.config import load_config, setup_device
 from utils.logger import ScientificLogger
 from utils.metrics import TimeSeriesMetrics
 from data.datasets import DataManager
