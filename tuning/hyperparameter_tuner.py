@@ -173,7 +173,7 @@ class HyperparameterTuner:
     
     def run_study(self):
         """运行超参数研究"""
-        print("🔬 Starting Hyperparameter Optimization Study")
+        print("[SCI] Starting Hyperparameter Optimization Study")
         self.logger.get_logger().info("Beginning hyperparameter optimization")
         
         # 创建Optuna研究
@@ -218,11 +218,11 @@ class HyperparameterTuner:
         except Exception as e:
             self.logger.get_logger().warning(f"Could not create parameter importance plot: {e}")
         
-        print(f"📊 Study results saved to {self.tuning_dir}")
+        print(f"Study results saved to {self.tuning_dir}")
 
 def run_temperature_sensitivity_analysis(config_path: str, dataset: str, encoder: str):
     """温度系数敏感性分析 - SCI论文常见分析"""
-    print(f"🌡️ Running Temperature Sensitivity Analysis for {dataset} with {encoder}")
+    print(f"Running Temperature Sensitivity Analysis for {dataset} with {encoder}")
     
     config = load_config(config_path)
     device = setup_device(config)
@@ -257,7 +257,7 @@ def run_temperature_sensitivity_analysis(config_path: str, dataset: str, encoder
     plt.savefig(sensitivity_dir / f"{dataset}_{encoder}_sensitivity_curve.png", dpi=300, bbox_inches='tight')
     plt.close()
     
-    print(f"✅ Temperature sensitivity analysis completed for {dataset} with {encoder}")
+    print(f"Temperature sensitivity analysis completed for {dataset} with {encoder}")
     
     return sensitivity_df
 
