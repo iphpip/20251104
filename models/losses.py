@@ -96,7 +96,7 @@ class FrequencyContrastiveLoss(nn.Module):
         return loss.mean()
 
 
-class CombinedContrastiveLoss(nn.Moderule):
+class CombinedContrastiveLoss(nn.Module):
     """组合对比损失"""
     
     def __init__(self, temp_nce: float = 0.07, margin_temp: float = 0.5,
