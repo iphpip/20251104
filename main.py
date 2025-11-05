@@ -30,6 +30,7 @@ from training.pretrainer import EnhancedContrastivePretrainer
 from training.detector_trainer import EnhancedAnomalyDetectorTrainer
 from training.evaluator import ComprehensiveEvaluator
 from analysis.experiment_analyzer import ExperimentAnalyzer
+from datetime import datetime
 
 def create_experiment_name(dataset: str, encoder: str, detector: str) -> str:
     """创建实验名称"""
@@ -65,6 +66,9 @@ def main():
         experiment_name = create_experiment_name(args.dataset, args.encoder, args.detector)
     else:
         experiment_name = args.experiment_name
+        
+    # 新增：保存主实验元数据
+    save_main_experiment_metadata(experiment_name, config, device)
     
     # 设置环境
     device = setup_device(config)
@@ -119,6 +123,24 @@ def main():
     finally:
         if args.use_wandb:
             wandb.finish()
+
+# 新增：主实验元数据保存函数
+def save_main_experiment_metadata(experiment_name: str, config: Dict, device: str):
+    meta_dir = Path("results/experiment_metadata")
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    meta_path = meta_dir / f"{experiment_name}_meta.json"
+    
+    with open(meta_path, 'w') as f:
+        json.dump({
+            'experiment_name': experiment_name,
+            'start_time': datetime.now().isoformat(),
+            'config': config,
+            'device': str(device),
+            'encoder': config['model']['encoder_type'],
+            'detector': config['model']['detector_type'],
+            'code_version': "v1.0"
+        }, f, indent=2)
+    print(f"主实验元数据保存到: {meta_path}")
 
 if __name__ == '__main__':
     main()

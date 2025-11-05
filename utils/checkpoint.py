@@ -128,3 +128,18 @@ class CheckpointManager:
                         self.checkpoint_index["checkpoints"].remove(cp)
         
         self._save_index()
+
+    def save_training_curves(self, 
+                            experiment_name: str, 
+                            curves: Dict[str, List[float]],  # 如 {'train_loss': [...], 'val_loss': [...]}
+                            epoch: int):
+        """保存训练曲线"""
+        curve_dir = self.checkpoint_dir / "training_curves" / experiment_name
+        curve_dir.mkdir(parents=True, exist_ok=True)
+        curve_path = curve_dir / f"curves_epoch_{epoch}.csv"
+        
+        # 转换为DataFrame保存
+        import pandas as pd
+        df = pd.DataFrame(curves)
+        df.to_csv(curve_path, index=False)
+        print(f"保存训练曲线到: {curve_path}")

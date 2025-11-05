@@ -11,6 +11,9 @@ SCI要求：严格的统计检验，全面的评估指标，可重复的评估�
 import torch
 import numpy as np
 import pandas as pd
+import json
+from pathlib import Path
+from datetime import datetime
 from sklearn.metrics import (accuracy_score, precision_score, recall_score, 
                            f1_score, roc_auc_score, average_precision_score,
                            precision_recall_curve, roc_curve, confusion_matrix)
@@ -19,14 +22,15 @@ from typing import Dict, List, Any, Tuple
 import warnings
 from tqdm import tqdm
 from utils.logger import ScientificLogger
-
+    
 class ScientificEvaluator:
     """科学评估器 - 满足SCI论文严谨性要求"""
     
-    def __init__(self, device: torch.device, config: dict):
+    def __init__(self, device: torch.device, config: dict, experiment_name: str):
         self.device = device
         self.config = config
         self.confidence_level = config['evaluation'].get('confidence_level', 0.95)
+        self.experiment_name = experiment_name
         self.logger = ScientificLogger(experiment_name)
         
     def comprehensive_evaluation(self, model, test_loader, dataset_name: str) -> Dict[str, Any]:
@@ -34,7 +38,7 @@ class ScientificEvaluator:
         综合评估模型性能
         SCI要求：多维度评估，置信区间计算，全面的性能分析
         """
-        print(f"🔬 Performing comprehensive evaluation on {dataset_name}...")
+        print(f"Performing comprehensive evaluation on {dataset_name}...")
         
         # 基础性能评估
         basic_metrics = self._evaluate_basic_performance(model, test_loader)
@@ -50,7 +54,8 @@ class ScientificEvaluator:
         # 性能分析
         performance_analysis = self._analyze_performance(basic_metrics)
         
-        return {
+        # 整合评估结果
+        evaluation_results = {
             'dataset': dataset_name,
             'basic_metrics': basic_metrics,
             'temporal_metrics': temporal_metrics,
@@ -60,6 +65,35 @@ class ScientificEvaluator:
                 basic_metrics, temporal_metrics, performance_analysis
             )
         }
+        
+        # 新增：评估完成后保存指标
+        self.save_evaluation_metrics(evaluation_results)
+        return evaluation_results
+    
+    # 新增：评估指标保存方法
+    def save_evaluation_metrics(self, evaluation_results: Dict[str, Any]):
+        """保存完整评估结果到JSON文件（符合SCI可复现性要求）"""
+        # 构建保存路径
+        save_dir = Path("results/evaluation") / self.experiment_name
+        save_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 生成带时间戳的文件名（确保唯一性）
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dataset_name = evaluation_results['dataset']
+        metrics_path = save_dir / f"{dataset_name}_evaluation_{timestamp}.json"
+        
+        # 补充元数据并保存
+        with open(metrics_path, 'w') as f:
+            json.dump({
+                'experiment_name': self.experiment_name,
+                'timestamp': timestamp,
+                'device': str(self.device),
+                'confidence_level': self.confidence_level,
+                **evaluation_results  # 合并评估结果
+            }, f, indent=2)
+        
+        print(f"评估结果已保存至: {metrics_path}")
+        self.logger.info(f"Evaluation results saved to {metrics_path}")  # 同步日志
     
     def statistical_significance_test(self, results_a: List[float], 
                                     results_b: List[float], 
@@ -108,7 +142,7 @@ class ScientificEvaluator:
         消融实验分析
         SCI要求：清晰的组件贡献度分析，性能变化量化
         """
-        print("🧪 Conducting ablation study...")
+        print("Conducting ablation study...")
         
         ablation_results = {}
         
@@ -140,7 +174,7 @@ class ScientificEvaluator:
         超参数敏感性分析
         SCI要求：参数范围合理，性能变化量化，鲁棒性评估
         """
-        print(f"📊 Analyzing sensitivity to {param_name}...")
+        print(f"Analyzing sensitivity to {param_name}...")
         
         performances = []
         
@@ -259,3 +293,12 @@ class ScientificEvaluator:
             return "medium"
         else:
             return "large"
+            
+    def _generate_evaluation_summary(self, basic_metrics, temporal_metrics, performance_analysis):
+        """生成评估摘要"""
+        return {
+            'best_metric': 'f1',
+            'best_value': basic_metrics['f1'],
+            'temporal_performance': temporal_metrics,
+            'confidence_level': self.confidence_level
+        }

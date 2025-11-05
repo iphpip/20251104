@@ -12,8 +12,8 @@ datasets:
   NAB:
     path: "nab"
     type: "univariate"
-    train_anomaly_ratio: 0.085
-    test_anomaly_ratio: 0.1036
+    train_anomaly_ratio: 0.0883
+    test_anomaly_ratio: 0.0977
   SWaT:
     path: "swat"
     type: "multivariate" 
@@ -24,8 +24,8 @@ datasets:
     path: "skab"
     type: "multivariate"
     dimensions: 8
-    train_anomaly_ratio: 0.2826
-    test_anomaly_ratio: 0.2855
+    train_anomaly_ratio: 0.2855
+    test_anomaly_ratio: 0.2772
   MIT-BIH:
     path: "mitdb"
     type: "multivariate"

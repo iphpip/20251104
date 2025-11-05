@@ -10,48 +10,17 @@ from typing import Dict, List, Tuple, Optional, Union
 from glob import glob
 from tqdm import tqdm
 from typing import Tuple
-import hashlib
-from pathlib import Path
 
 class BaseTimeSeriesDataset(Dataset):
-    """时间序列数据集基类（添加缓存逻辑）"""
+    """时间序列数据集基类"""
     
     def __init__(self, data: np.ndarray, labels: np.ndarray, 
-                 window_size: int = 100, stride: int = 1, normalize: bool = True,
-                 cache_dir: str = "cache/datasets"):  # 新增缓存目录参数
+                 window_size: int = 100, stride: int = 1, normalize: bool = True):
         self.data = self._normalize_data(data) if normalize else data
         self.labels = labels
         self.window_size = window_size
         self.stride = stride
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)  # 确保缓存目录存在
-        self.samples = self._load_or_create_samples()  # 替换原 self.samples = self._create_samples()
-    
-    def _get_cache_key(self) -> str:
-        """生成唯一缓存键（避免不同参数/数据的缓存冲突）"""
-        # 对数据特征和关键参数哈希，确保唯一性
-        data_hash = hashlib.md5(self.data.tobytes()).hexdigest()[:8]
-        labels_hash = hashlib.md5(self.labels.tobytes()).hexdigest()[:8]
-        return f"samples_ws{self.window_size}_str{self.stride}_d{data_hash}_l{labels_hash}.pkl"
-    
-    def _load_or_create_samples(self) -> List[Tuple[np.ndarray, int]]:
-        """加载缓存或创建新样本"""
-        cache_path = self.cache_dir / self._get_cache_key()
-        
-        # 检查缓存是否存在
-        if cache_path.exists():
-            print(f"加载缓存样本: {cache_path.name}")
-            with open(cache_path, 'rb') as f:
-                return pickle.load(f)
-        
-        # 缓存不存在，生成样本并保存
-        print(f"生成新样本（将缓存到 {cache_path.name}）")
-        samples = self._create_samples()
-        
-        # 保存缓存
-        with open(cache_path, 'wb') as f:
-            pickle.dump(samples, f)
-        return samples
+        self.samples = self._create_samples()
         
     def _normalize_data(self, data: np.ndarray) -> np.ndarray:
         """标准化数据（避免不同尺度特征影响模型）"""
@@ -164,29 +133,15 @@ class BaseTimeSeriesDataset(Dataset):
         return torch.FloatTensor(np.asarray(data, dtype=np.float32)), torch.tensor(label, dtype=torch.long)
 
 class NABDataset(BaseTimeSeriesDataset):
-    """NAB数据集加载器（修复标签匹配+移除进度条，优化重复加载问题）"""
-    
-    # 类变量：存储全量数据（只加载一次，所有实例复用）
-    _full_data = None
-    _full_labels = None
-    # 类变量：缓存数据路径（确保不同实例使用相同路径，避免路径不一致导致的问题）
-    _cached_data_path = None
+    """NAB数据集加载器（修复标签匹配+移除进度条）"""
     
     def __init__(self, data_path: str, window_size: int = 100, 
                  stride: int = 1, split: str = 'train', normalize: bool = True):
         self.data_path = data_path.rstrip(os.sep)
-        # 1. 检查全量数据是否已加载，且数据路径一致（避免不同路径混用）
-        if (NABDataset._full_data is None or NABDataset._full_labels is None) or (NABDataset._cached_data_path != self.data_path):
-            # 若未加载或路径变更，重新加载全量数据，并缓存路径
-            NABDataset._full_data, NABDataset._full_labels = self._load_full_nab_data()
-            NABDataset._cached_data_path = self.data_path
-        
-        # 2. 从全量数据中划分当前split的子集（不重复加载）
-        data, labels = self._split_data(split)
+        data, labels = self._load_nab_data(split)
         super().__init__(data, labels, window_size, stride, normalize)
     
-    def _load_full_nab_data(self) -> Tuple[np.ndarray, np.ndarray]:
-        """加载全量NAB数据（只执行一次）：包含标签读取、CSV遍历、数据处理与合并"""
+    def _load_nab_data(self, split: str) -> Tuple[np.ndarray, np.ndarray]:
         # 1. 加载标签文件
         label_file = os.path.join(self.data_path, "labels", "combined_windows.json")
         if not os.path.exists(label_file):
@@ -196,11 +151,12 @@ class NABDataset(BaseTimeSeriesDataset):
             anomaly_windows = json.load(f)  # 标签键格式："artificialWithAnomaly/art_daily_flatmiddle.csv"
         
         # 2. 遍历所有CSV文件（移除tqdm进度条）
+        # 只搜索data子目录下的CSV（避免无关文件），并过滤系统文件（__MACOSX、.DS_Store）
         csv_files = glob(
-            os.path.join(self.data_path, "data", "**", "*.csv"),  # 明确从data子目录搜索
+            os.path.join(self.data_path, "data", "**", "*.csv"),  # 明确从data子目录开始搜索
             recursive=True
         )
-        # 过滤无效文件（系统文件、无关目录）
+        # 过滤无效文件
         csv_files = [
             f for f in csv_files 
             if "__MACOSX" not in f and not os.path.basename(f).startswith('.')
@@ -214,9 +170,10 @@ class NABDataset(BaseTimeSeriesDataset):
         
         # 遍历文件（无进度条）
         for file_path in csv_files:
-            # 计算文件相对路径（关键：与标签键匹配，移除"data/"前缀）
-            rel_path = os.path.relpath(file_path, self.data_path)  # 结果：data/xxx/xxx.csv
-            file_key = rel_path.replace(os.sep, '/').replace("data/", "", 1)  # 结果：xxx/xxx.csv
+            # 计算文件相对路径（关键：移除"data/"前缀，与标签键匹配）
+            # 例如：将"data/artificialWithAnomaly/xxx.csv"转换为"artificialWithAnomaly/xxx.csv"
+            rel_path = os.path.relpath(file_path, self.data_path)  # 相对路径：data/xxx/xxx.csv
+            file_key = rel_path.replace(os.sep, '/').replace("data/", "", 1)  # 移除开头的data/
             
             # 读取数据
             try:
@@ -234,21 +191,21 @@ class NABDataset(BaseTimeSeriesDataset):
                 print(f"跳过 {os.path.basename(file_path)}：缺少必要列{required_cols}")
                 continue
             
-            # 提取特征列（保持二维结构）
+            # 提取特征列
             data = df['value'].values.reshape(-1, 1)
             n_samples = len(data)
             if n_samples == 0:
                 print(f"跳过 {os.path.basename(file_path)}：空文件")
                 continue
             
-            # 生成标签（默认全0：正常）
+            # 生成标签
             labels = np.zeros(n_samples, dtype=int)
             
-            # 特殊处理：artificialNoAnomaly目录的文件强制为正常（不标记异常）
+            # 特殊处理：artificialNoAnomaly目录强制为正常
             if "artificialNoAnomaly" in file_key:
                 print(f"加载无异常文件 {os.path.basename(file_path)}：总样本{n_samples}")
             else:
-                # 从标签文件匹配并标记异常区间
+                # 从标签文件匹配异常区间（基于时间戳范围）
                 if file_key in anomaly_windows:
                     timestamps = pd.to_datetime(df['timestamp'])
                     
@@ -263,9 +220,9 @@ class NABDataset(BaseTimeSeriesDataset):
                         # 标记异常区间
                         mask = (timestamps >= window_start) & (timestamps <= window_end)
                         if np.any(mask):
-                            labels[mask] = 1  # 异常样本标记为1
+                            labels[mask] = 1  # 异常标记为1
                 
-                # 统计当前文件的样本分布
+                # 统计异常样本
                 n_anomaly = np.sum(labels)
                 n_normal = n_samples - n_anomaly
                 print(f"加载文件 {os.path.basename(file_path)}：总样本{n_samples}，异常{n_anomaly}，正常{n_normal}")
@@ -273,36 +230,23 @@ class NABDataset(BaseTimeSeriesDataset):
             all_data.append(data)
             all_labels.append(labels)
         
-        # 合并全量数据
+        # 合并数据
         if not all_data:
             raise ValueError("未加载到有效数据")
-        full_data = np.vstack(all_data)
-        full_labels = np.concatenate(all_labels)
-        print(f"\n合并后NAB全量数据：总样本{len(full_labels)}，异常样本{np.sum(full_labels)}，异常比例{np.sum(full_labels)/len(full_labels):.4f}")
+        data = np.vstack(all_data)
+        labels = np.concatenate(all_labels)
         
-        return full_data, full_labels
-    
-    def _split_data(self, split: str) -> Tuple[np.ndarray, np.ndarray]:
-        """从全量数据中划分指定split的子集（仅切分，不重复加载）"""
-        n_total = len(NABDataset._full_labels)
+        # 划分数据集
+        n_total = len(data)
         n_train = int(0.7 * n_total)
         n_val = int(0.8 * n_total)
         
-        # 按split返回对应数据
         if split == 'train':
-            split_data = NABDataset._full_data[:n_train]
-            split_labels = NABDataset._full_labels[:n_train]
-            print(f"\n{split}集：样本数{len(split_labels)}（占全量70%）")
+            return data[:n_train], labels[:n_train]
         elif split == 'test':
-            split_data = NABDataset._full_data[n_val:]
-            split_labels = NABDataset._full_labels[n_val:]
-            print(f"\n{split}集：样本数{len(split_labels)}（占全量20%）")
-        else:  # val集
-            split_data = NABDataset._full_data[n_train:n_val]
-            split_labels = NABDataset._full_labels[n_train:n_val]
-            print(f"\n{split}集：样本数{len(split_labels)}（占全量10%）")
-        
-        return split_data, split_labels
+            return data[n_val:], labels[n_val:]
+        else:  # val
+            return data[n_train:n_val], labels[n_train:n_val]
 
 class SKABDataset(BaseTimeSeriesDataset):
     """SKAB数据集加载器"""
@@ -483,25 +427,18 @@ class SKABDataset(BaseTimeSeriesDataset):
 class SWaTDataset(BaseTimeSeriesDataset):
     """SWaT数据集加载器（适配3个CSV文件：2个正常+1个攻击）"""
     
-    # 类变量：存储全量数据（只加载一次）
-    _normal_data = None
-    _normal_labels = None
-    _attack_data = None
-    _attack_labels = None
-    
     def __init__(self, data_path: str, window_size: int = 100, 
                  stride: int = 1, split: str = 'train', normalize: bool = True):
-        # 若全量数据未加载，则加载一次
-        if SWaTDataset._normal_data is None or SWaTDataset._attack_data is None:
-            SWaTDataset._normal_data, SWaTDataset._normal_labels, \
-            SWaTDataset._attack_data, SWaTDataset._attack_labels = self._load_full_swat_data(data_path)
-        
-        # 从全量数据中划分当前split
-        data, labels = self._split_data(split)
+        data, labels = self._load_swat_data(data_path, split)
         super().__init__(data, labels, window_size, stride, normalize)
     
-    def _load_full_swat_data(self, data_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """加载全量SWaT数据（只执行一次）"""
+    def _load_swat_data(self, data_path: str, split: str) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        加载SWaT数据集：
+        - 训练集：合并两个正常文件（SWaT_Dataset_Normal_v0.CSV + SWaT_Dataset_Normal_v1.CSV）
+        - 测试集：使用攻击文件（SWaT_Dataset_Attack_v0.CSV）
+        - 验证集：从正常文件中划分10%作为验证集
+        """
         # 定义三个文件的预期名称
         normal_files = [
             "SWaT_Dataset_Normal_v0.CSV",
@@ -525,20 +462,22 @@ class SWaTDataset(BaseTimeSeriesDataset):
         for normal_f in normal_files:
             file_path = os.path.join(data_path, normal_f)
             try:
+                # SWaT的CSV可能用逗号分隔，首行是标题，第二行是单位（需跳过）
                 df = pd.read_csv(file_path, skiprows=1)  # 跳过第二行单位说明
             except Exception as e:
                 raise RuntimeError(f"读取正常文件 {normal_f} 失败：{e}")
             
             df.columns = df.columns.str.strip()
+            # 特征列：排除时间戳和标签列（正常文件标签列通常为'Normal/Attack'，值全为'Normal'）
             feature_cols = [col for col in df.columns if col not in ['Timestamp', 'Normal/Attack']]
             if not feature_cols:
                 raise ValueError(f"正常文件 {normal_f} 无有效特征列，列名：{df.columns.tolist()}")
             
             # 转换特征为数值型，处理异常值
             data = df[feature_cols].apply(pd.to_numeric, errors='coerce').values
-            data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
+            data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)  # 填充NaN和极端值
             
-            # 正常文件标签全为0
+            # 正常文件标签全为0（正常）
             labels = np.zeros(len(data), dtype=int)
             
             normal_data_list.append(data)
@@ -561,11 +500,14 @@ class SWaTDataset(BaseTimeSeriesDataset):
             raise RuntimeError(f"读取攻击文件 {attack_file} 失败：{e}")
         
         attack_df.columns = attack_df.columns.str.strip()
+        # 验证标签列是否存在
         if 'Normal/Attack' not in attack_df.columns:
+            # 若仍不存在，打印实际列名帮助排查
             raise ValueError(
                 f"攻击文件 {attack_file} 未找到'Normal/Attack'列，实际列名：\n"
                 f"{attack_df.columns.tolist()}"
             )
+        # 攻击文件特征列（与正常文件一致）
         attack_feature_cols = [col for col in attack_df.columns if col not in ['Timestamp', 'Normal/Attack']]
         if not attack_feature_cols:
             raise ValueError(f"攻击文件 {attack_file} 无有效特征列")
@@ -574,34 +516,33 @@ class SWaTDataset(BaseTimeSeriesDataset):
         attack_data = attack_df[attack_feature_cols].apply(pd.to_numeric, errors='coerce').values
         attack_data = np.nan_to_num(attack_data, nan=0.0, posinf=0.0, neginf=0.0)
         
-        # 攻击文件标签：'Normal'→0，'Attack'→1
+        # 攻击文件标签：'Normal'→0，'Attack'→1（攻击文件中既有正常也有攻击段）
+        if 'Normal/Attack' not in attack_df.columns:
+            raise ValueError(f"攻击文件 {attack_file} 无'Normal/Attack'标签列")
         attack_labels = np.where(attack_df['Normal/Attack'] == 'Attack', 1, 0).astype(int)
         print(f"加载攻击文件 {attack_file}：总样本 {len(attack_data)}，异常样本 {np.sum(attack_labels)}，正常样本 {len(attack_data)-np.sum(attack_labels)}")
         
-        return normal_data, normal_labels, attack_data, attack_labels
-    
-    def _split_data(self, split: str) -> Tuple[np.ndarray, np.ndarray]:
-        """根据split划分数据（复用全量数据）"""
-        total_normal = len(SWaTDataset._normal_labels)
-        
+        # --------------------------
+        # 3. 划分数据集（train/val/test）
+        # --------------------------
         if split == 'train':
-            # 训练集：正常数据的90%
+            # 训练集：使用正常数据的90%（纯正常）
             train_size = int(0.9 * total_normal)
-            data = SWaTDataset._normal_data[:train_size]
-            labels = SWaTDataset._normal_labels[:train_size]
+            data = normal_data[:train_size]
+            labels = normal_labels[:train_size]
             print(f"训练集：正常样本 {len(labels)}（占正常数据90%）")
         
         elif split == 'val':
-            # 验证集：正常数据的10%
+            # 验证集：使用正常数据的10%（纯正常，用于调参）
             train_size = int(0.9 * total_normal)
-            data = SWaTDataset._normal_data[train_size:]
-            labels = SWaTDataset._normal_labels[train_size:]
+            data = normal_data[train_size:]
+            labels = normal_labels[train_size:]
             print(f"验证集：正常样本 {len(labels)}（占正常数据10%）")
         
         elif split == 'test':
-            # 测试集：攻击文件数据
-            data = SWaTDataset._attack_data
-            labels = SWaTDataset._attack_labels
+            # 测试集：使用攻击文件（含正常和攻击样本）
+            data = attack_data
+            labels = attack_labels
             print(f"测试集：总样本 {len(labels)}，异常比例 {np.sum(labels)/len(labels):.4f}")
         
         else:
@@ -612,22 +553,13 @@ class SWaTDataset(BaseTimeSeriesDataset):
 class MITBIHDataset(BaseTimeSeriesDataset):
     """MIT-BIH数据集加载器（修复异常心跳识别）"""
     
-    # 类变量：存储全量数据
-    _full_data = None
-    _full_labels = None
-    
     def __init__(self, data_path: str, window_size: int = 100, 
                  stride: int = 1, split: str = 'train', normalize: bool = True):
-        # 若全量数据未加载，则加载一次
-        if MITBIHDataset._full_data is None or MITBIHDataset._full_labels is None:
-            MITBIHDataset._full_data, MITBIHDataset._full_labels = self._load_full_mitbih_data(data_path)
-        
-        # 从全量数据中划分当前split
-        data, labels = self._split_data(split)
+        data, labels = self._load_mitbih_data(data_path, split)
         super().__init__(data, labels, window_size, stride, normalize)
     
-    def _load_full_mitbih_data(self, data_path: str) -> Tuple[np.ndarray, np.ndarray]:
-        """加载全量MIT-BIH数据"""
+    def _load_mitbih_data(self, data_path: str, split: str) -> Tuple[np.ndarray, np.ndarray]:
+        """加载MIT-BIH数据集（修复异常标签标记：正确区分正常/异常心跳）"""
         all_data = []
         all_labels = []
         
@@ -638,9 +570,11 @@ class MITBIHDataset(BaseTimeSeriesDataset):
             raise FileNotFoundError(f"No MIT-BIH .dat files found in {data_path}")
         
         # 定义异常心跳符号（参考MIT-BIH官方文档）
+        # 正常心跳：'N'（正常）、'L'（左束支传导阻滞）、'R'（右束支传导阻滞）等
+        # 异常心跳：以下符号代表各类心律失常
         ANOMALY_SYMBOLS = {'A', 'a', 'J', 'S', 'V', 'E', 'F', '/', 'f', 'Q'}
         
-        # 加载所有记录
+        # 加载所有记录（移除[:10]限制，避免数据量不足）
         for record_name in record_names:
             try:
                 # 读取记录和注释
@@ -658,14 +592,17 @@ class MITBIHDataset(BaseTimeSeriesDataset):
                 labels = np.zeros(n_samples, dtype=int)
                 anomaly_window = 3  # 异常心跳前后3帧标记为异常
                 
-                # 遍历注释，标记异常区间
-                for sample, symbol in zip(annotation.sample, annotation.symbol):
-                    if symbol in ANOMALY_SYMBOLS and 0 <= sample < n_samples:
-                        start = max(0, sample - anomaly_window)
-                        end = min(n_samples - 1, sample + anomaly_window)
-                        labels[start:end+1] = 1  # 标记异常区间
+                # 遍历注释，仅标记异常心跳对应的区间
+                for idx, (sample, symbol) in enumerate(zip(annotation.sample, annotation.symbol)):
+                    # 仅处理异常心跳符号
+                    if symbol in ANOMALY_SYMBOLS:
+                        # 确保样本索引在有效范围内
+                        if 0 <= sample < n_samples:
+                            start = max(0, sample - anomaly_window)
+                            end = min(n_samples - 1, sample + anomaly_window)
+                            labels[start:end+1] = 1  # 标记异常区间
                 
-                # 统计当前记录的异常比例
+                # 统计当前记录的异常比例（用于验证）
                 n_anomaly = np.sum(labels)
                 print(f"加载记录 {record_name}：总样本{n_samples}，异常样本{n_anomaly}，异常比例{n_anomaly/n_samples:.4f}")
                 
@@ -680,27 +617,20 @@ class MITBIHDataset(BaseTimeSeriesDataset):
             raise FileNotFoundError(f"No valid MIT-BIH data found in {data_path}")
         
         # 合并所有序列
-        full_data = np.vstack(all_data)
-        full_labels = np.concatenate(all_labels)
-        print(f"合并后MIT-BIH总样本：{len(full_labels)}")
+        data = np.vstack(all_data)
+        labels = np.concatenate(all_labels)
         
-        return full_data, full_labels
-    
-    def _split_data(self, split: str) -> Tuple[np.ndarray, np.ndarray]:
-        """根据split划分数据（复用全量数据）"""
-        n_total = len(MITBIHDataset._full_labels)
-        
+        # 数据集划分
+        n_total = len(data)
         if split == 'train':
-            data = MITBIHDataset._full_data[:int(0.7 * n_total)]
-            labels = MITBIHDataset._full_labels[:int(0.7 * n_total)]
+            data = data[:int(0.7 * n_total)]
+            labels = labels[:int(0.7 * n_total)]
         elif split == 'val':
-            data = MITBIHDataset._full_data[int(0.7 * n_total):int(0.8 * n_total)]
-            labels = MITBIHDataset._full_labels[int(0.7 * n_total):int(0.8 * n_total)]
+            data = data[int(0.7 * n_total):int(0.8 * n_total)]
+            labels = labels[int(0.7 * n_total):int(0.8 * n_total)]
         elif split == 'test':
-            data = MITBIHDataset._full_data[int(0.8 * n_total):]
-            labels = MITBIHDataset._full_labels[int(0.8 * n_total):]
-        else:
-            raise ValueError(f"无效的split：{split}，可选值：train/val/test")
+            data = data[int(0.8 * n_total):]
+            labels = labels[int(0.8 * n_total):]
         
         return data, labels
 

@@ -176,6 +176,19 @@ class EnhancedContrastivePretrainer:
             
             # 验证
             val_loss = self.validate(val_loader) if val_loader else None
+
+            # 保存训练曲线（每个epoch或间隔保存）
+            if epoch % self.config.get('curve_save_interval', 5) == 0:
+                curves = {
+                    'train_loss': self.train_losses,
+                    'val_loss': self.val_losses,
+                    'learning_rate': self.learning_rates
+                }
+                self.checkpoint_manager.save_training_curves(
+                    experiment_name=self.experiment_name,
+                    curves=curves,
+                    epoch=epoch
+                )
             
             # 学习率调度
             self.scheduler.step()

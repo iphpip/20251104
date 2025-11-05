@@ -4,13 +4,12 @@ SCI要求：全面的基线比较，公平的实验设置
 """
 import numpy as np
 import pandas as pd
-import json  # 修复1：新增json导入（用于保存报告）
-import matplotlib.pyplot as plt  # 修复2：新增matplotlib导入（用于可视化）
+import json
+import matplotlib.pyplot as plt
 from sklearn.ensemble import IsolationForest
 from sklearn.svm import OneClassSVM
 from sklearn.preprocessing import StandardScaler
 from sklearn.covariance import EllipticEnvelope
-# 修复3：替换sklearn的LOF为pyod的LOF（支持测试集预测，避免数据泄露）
 from pyod.models.lof import LOF
 from pyod.models.auto_encoder import AutoEncoder
 from pyod.models.iforest import IForest
@@ -24,6 +23,9 @@ from utils.config import load_config, setup_device
 from utils.logger import ScientificLogger
 from utils.metrics import TimeSeriesMetrics
 from data.datasets import DataManager
+import pickle
+from datetime import datetime
+
 
 class BaselineExperiments:
     """基线实验运行器"""
@@ -38,7 +40,10 @@ class BaselineExperiments:
         self.baseline_dir.mkdir(parents=True, exist_ok=True)
         
         self.logger = ScientificLogger("baseline_experiments")
-        
+        # 新增：生成实验唯一ID并保存元数据
+        self.experiment_id = f"baseline_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        self.logger = ScientificLogger(self.experiment_id)  # 使用实验ID作为日志名称
+              
         # 记录基线方法描述
         self.logger.log_research_design({
             "baseline_methods": {
@@ -49,6 +54,74 @@ class BaselineExperiments:
             },
             "evaluation_criteria": "Same dataset splits, same evaluation metrics, same hardware"
         })
+        self._save_experiment_metadata()
+
+    def _save_experiment_metadata(self):
+        """保存基线实验元数据（满足SCI实验可复现性要求）"""
+        meta_dir = Path("results/experiment_metadata")
+        meta_dir.mkdir(parents=True, exist_ok=True)
+        meta_path = meta_dir / f"{self.experiment_id}_meta.json"
+        
+        with open(meta_path, 'w') as f:
+            json.dump({
+                'experiment_id': self.experiment_id,
+                'start_time': datetime.now().isoformat(),
+                'config': self.config,  # 完整配置参数
+                'device': str(self.device),
+                'code_version': "v1.0",  # 可替换为git commit hash
+                'baseline_types': list(self.logger.experiment_record["methodology"]["baseline_methods"].keys()),
+                'dataset_names': self.config.get('datasets', ['unknown']),  # 从配置中获取数据集信息
+                'reproducibility_info': {
+                    'python_version': f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                    'pytorch_version': torch.__version__,
+                    'random_seed': self.config.get('seed', 42)
+                }
+            }, f, indent=2)
+        
+        print(f"基线实验元数据已保存至: {meta_path}")
+        self.logger.info(f"Baseline experiment metadata saved to {meta_path}")
+
+    def prepare_data(self, dataset, dataset_name: str, split: str) -> Tuple[np.ndarray, np.ndarray]:
+        """准备基线方法的数据（添加特征缓存）"""
+        # 定义缓存路径
+        cache_dir = Path("cache/baseline_features")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_key = f"{dataset_name}_{split}_features.pkl"
+        cache_path = cache_dir / cache_key
+        
+        # 检查缓存
+        if cache_path.exists():
+            print(f"加载缓存特征: {cache_path.name}")
+            with open(cache_path, 'rb') as f:
+                return pickle.load(f)
+        
+        # 无缓存，生成特征
+        features = []
+        labels = []
+        for data, label in dataset:
+            # （保持原有特征提取逻辑不变）
+            data = np.asarray(data, dtype=np.float32)
+            stats_features = []
+            for dim in range(data.shape[1] if len(data.shape) > 1 else 1):
+                dim_data = data[:, dim] if len(data.shape) > 1 else data
+                stats_features.extend([
+                    np.mean(dim_data), np.std(dim_data), np.min(dim_data),
+                    np.max(dim_data), np.median(dim_data),
+                    np.percentile(dim_data, 25), np.percentile(dim_data, 75)
+                ])
+            features.append(stats_features)            
+            labels.append(label if isinstance(label, int) else label.item())
+        
+        # 标准化
+        scaler = StandardScaler()
+        features = scaler.fit_transform(features)
+        result = (np.array(features), np.array(labels))
+        
+        # 保存缓存
+        with open(cache_path, 'wb') as f:
+            pickle.dump(result, f)
+        print(f"保存特征缓存: {cache_path.name}")
+        return result
     
     def run_all_baselines(self, dataset: str) -> pd.DataFrame:
         """运行所有基线方法"""
@@ -60,8 +133,10 @@ class BaselineExperiments:
         test_dataset = data_manager.load_dataset(dataset, 'test')
         
         # 准备数据（仅处理1次，生成统计特征）
-        X_train, y_train = self.prepare_data(train_dataset)
-        X_test, y_test = self.prepare_data(test_dataset)
+        #X_train, y_train = self.prepare_data(train_dataset)
+        X_train, y_train = self.prepare_data(train_dataset, dataset, 'train')
+        X_test, y_test = self.prepare_data(test_dataset, dataset, 'test')
+        #X_test, y_test = self.prepare_data(test_dataset)
         
         baseline_results = {}
         
@@ -237,11 +312,98 @@ class BaselineExperiments:
         return scores / np.max(scores)  # 归一化到[0,1]
     
     def lstm_autoencoder(self, train_dataset, X_test: np.ndarray, y_test: np.ndarray) -> np.ndarray:
-        """LSTM自动编码器（演示代码：需替换为实际PyTorch实现）"""
-        # 提示：实际实现需定义LSTM-AE网络、训练逻辑、计算重构误差作为异常分数
-        # 当前返回随机分数仅用于测试流程，需替换！
-        print("  ⚠️ LSTM AutoEncoder为演示代码，返回随机分数，请替换为实际实现！")
-        return np.random.random(len(X_test))
+        """LSTM自动编码器实现 - 计算重构误差作为异常分数"""
+        # 数据准备
+        # 转换为时间序列格式 (样本数, 时间步, 特征数)
+        seq_len = self.config['data']['window_size']
+        n_features = X_test.shape[1] if len(X_test.shape) > 1 else 1
+        
+        # 重塑训练数据为时间序列格式
+        X_train = []
+        for data, _ in train_dataset:
+            if len(data.shape) == 1:
+                data = data.unsqueeze(1)  # 增加特征维度
+            X_train.append(data.numpy())
+        X_train = np.array(X_train)
+        
+        # 定义LSTM自动编码器
+        class LSTMAutoEncoder(nn.Module):
+            def __init__(self, input_dim, hidden_dim, seq_len, num_layers=2):
+                super().__init__()
+                self.seq_len = seq_len
+                self.hidden_dim = hidden_dim
+                
+                # 编码器
+                self.encoder = nn.LSTM(
+                    input_size=input_dim,
+                    hidden_size=hidden_dim,
+                    num_layers=num_layers,
+                    batch_first=True
+                )
+                
+                # 解码器
+                self.decoder = nn.LSTM(
+                    input_size=hidden_dim,
+                    hidden_size=input_dim,
+                    num_layers=num_layers,
+                    batch_first=True
+                )
+                self.output_layer = nn.Linear(input_dim, input_dim)
+                
+            def forward(self, x):
+                # 编码
+                _, (hidden, cell) = self.encoder(x)
+                
+                # 解码使用最后一个时间步的隐藏状态作为初始状态
+                # 创建解码器输入 (重复隐藏状态作为初始输入)
+                decoder_input = torch.zeros(x.size(0), self.seq_len, self.hidden_dim).to(x.device)
+                output, _ = self.decoder(decoder_input, (hidden, cell))
+                return self.output_layer(output)
+        
+        # 初始化模型
+        model = LSTMAutoEncoder(
+            input_dim=n_features,
+            hidden_dim=64,
+            seq_len=seq_len,
+            num_layers=2
+        ).to(self.device)
+        
+        # 训练配置
+        criterion = nn.MSELoss()
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        epochs = 50
+        batch_size = 32
+        
+        # 转换为Tensor并创建DataLoader
+        train_tensor = torch.FloatTensor(X_train).to(self.device)
+        train_loader = DataLoader(train_tensor, batch_size=batch_size, shuffle=True)
+        
+        # 训练模型
+        model.train()
+        for epoch in range(epochs):
+            total_loss = 0
+            for batch in train_loader:
+                optimizer.zero_grad()
+                outputs = model(batch)
+                loss = criterion(outputs, batch)  # 重构损失
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item()
+            
+            if (epoch + 1) % 10 == 0:
+                print(f"  LSTM-AE Epoch {epoch+1}/{epochs}, Loss: {total_loss/len(train_loader):.6f}")
+        
+        # 计算测试集重构误差作为异常分数
+        model.eval()
+        test_tensor = torch.FloatTensor(X_test.reshape(-1, seq_len, n_features)).to(self.device)
+        with torch.no_grad():
+            reconstructions = model(test_tensor)
+            mse = torch.mean((test_tensor - reconstructions) **2, dim=(1, 2))  # 计算每个样本的平均重构误差
+            scores = mse.cpu().numpy()
+        
+        # 归一化分数到[0,1]
+        scores = (scores - scores.min()) / (scores.max() - scores.min() + 1e-8)
+        return scores
 
 
 class BaselineComparison:
